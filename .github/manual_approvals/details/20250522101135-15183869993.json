@@ -1,0 +1,10 @@
+{
+  "approval_id": "20250522101135-15183869993",
+  "timestamp": "2025-05-22 10:11:35 UTC",
+  "action": "request-approval",
+  "target": "production",
+  "requested_by": "taksgarby",
+  "approved_by": "Unknown",
+  "workflow_run": "15183869993",
+  "workflow_url": "https://github.com/taksgarby/approvaltest/actions/runs/15183869993"
+}

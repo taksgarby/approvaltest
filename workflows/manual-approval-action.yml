@@ -1,0 +1,101 @@
+name: Manual Action with Approval Tracking
+
+on:
+  # Workflow dispatch allows manual triggering with input parameters
+  workflow_dispatch:
+    inputs:
+      action_description:
+        description: 'Description of the action being approved'
+        required: true
+        type: string
+      resource_target:
+        description: 'Target resource or environment'
+        required: true
+        type: string
+
+jobs:
+  request-approval:
+    runs-on: ubuntu-latest
+    # This step just logs the request and passes to the approval step
+    steps:
+      - name: Log Request Details
+        run: |
+          echo "Action Requested: ${{ github.event.inputs.action_description }}"
+          echo "Target: ${{ github.event.inputs.resource_target }}"
+          echo "Requested By: ${{ github.actor }}"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+  execute-action:
+    needs: request-approval
+    # The environment setting is what triggers the approval requirement
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+      
+      - name: Record Approval Details
+        run: |
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Create approvals directory if it doesn't exist
+          mkdir -p .github/manual_approvals
+          
+          # Generate a unique approval ID
+          APPROVAL_ID=$(date -u '+%Y%m%d%H%M%S')-${{ github.run_id }}
+          
+          # Create the main approvals log file if it doesn't exist
+          touch .github/manual_approvals/approvals_log.csv
+          
+          # Add header if file is empty
+          if [ ! -s .github/manual_approvals/approvals_log.csv ]; then
+            echo "approval_id,timestamp,action,target,requested_by,approved_by,workflow_run" > .github/manual_approvals/approvals_log.csv
+          fi
+          
+          # Get the approver information from GitHub context
+          # This requires the GITHUB_TOKEN to have appropriate permissions
+          APPROVER=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" | \
+            jq -r '.approving_user.login // "Unknown"')
+          
+          # Use "Unknown" if we couldn't get the approver name
+          if [ "$APPROVER" = "null" ] || [ -z "$APPROVER" ]; then
+            APPROVER="Unknown"
+          fi
+          
+          # Append the new approval record
+          echo "$APPROVAL_ID,$(date -u '+%Y-%m-%d %H:%M:%S UTC'),${{ github.event.inputs.action_description }},${{ github.event.inputs.resource_target }},${{ github.actor }},$APPROVER,${{ github.run_id }}" >> .github/manual_approvals/approvals_log.csv
+          
+          # Create detailed JSON record
+          mkdir -p .github/manual_approvals/details
+          cat > .github/manual_approvals/details/$APPROVAL_ID.json << EOF
+          {
+            "approval_id": "$APPROVAL_ID",
+            "timestamp": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')",
+            "action": "${{ github.event.inputs.action_description }}",
+            "target": "${{ github.event.inputs.resource_target }}",
+            "requested_by": "${{ github.actor }}",
+            "approved_by": "$APPROVER",
+            "workflow_run": "${{ github.run_id }}",
+            "workflow_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          
+          # Commit the approval records
+          git add .github/manual_approvals/
+          git commit -m "Record manual approval $APPROVAL_ID for ${{ github.event.inputs.action_description }}"
+          git push
+
+      # This is where you'd put your actual action steps after approval
+      - name: Execute Approved Action
+        run: |
+          echo "Executing approved action: ${{ github.event.inputs.action_description }}"
+          echo "On target: ${{ github.event.inputs.resource_target }}"
+          # Add your actual commands here (Terraform apply, etc.)
